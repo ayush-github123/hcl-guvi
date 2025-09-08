@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 import json
 from research_chain import create_research_agent
+from memory_manager import get_memory_manager
 from config import Config
 
 # Page configuration with forced light theme
@@ -90,6 +91,31 @@ st.markdown("""
     box-shadow: 0 2px 8px rgba(14, 165, 233, 0.1);
 }
 
+.memory-card {
+    background: linear-gradient(135deg, #fef7cd 0%, #fef3c7 100%);
+    padding: 1.5rem;
+    border-radius: 12px;
+    margin: 1rem 0;
+    border-left: 5px solid #f59e0b;
+    border: 1px solid #f3d365;
+}
+
+.history-item {
+    background-color: #ffffff;
+    padding: 1rem;
+    border-radius: 8px;
+    margin: 0.5rem 0;
+    border: 1px solid #e5e7eb;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.history-item:hover {
+    background-color: #f9fafb;
+    border-color: #4f46e5;
+    transform: translateX(5px);
+}
+
 /* Sidebar styling */
 .css-1d391kg {
     background-color: #f8fafc;
@@ -111,6 +137,11 @@ st.markdown("""
 .stButton > button[kind="primary"]:hover {
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+}
+
+.stButton > button[kind="secondary"] {
+    background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
+    color: white;
 }
 
 /* Progress bar styling */
@@ -184,16 +215,31 @@ div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div
 </style>
 """, unsafe_allow_html=True)
 
+def initialize_user_session():
+    """Initialize user session and memory"""
+    if 'user_id' not in st.session_state:
+        import hashlib
+        st.session_state.user_id = hashlib.md5(f"user_{datetime.now().isoformat()}".encode()).hexdigest()[:12]
+    
+    if 'memory_enabled' not in st.session_state:
+        st.session_state.memory_enabled = True
+
 def main():
+    # Initialize user session
+    initialize_user_session()
+    
     # Enhanced Header
     st.markdown("""
     <div class="main-header">
         <h1>🔍 AI Research Agent</h1>
-        <p>Professional research assistant for comprehensive information gathering, analysis, and synthesis</p>
+        <p>Professional research assistant with memory - remembers your research history and provides contextual insights</p>
     </div>
     """, unsafe_allow_html=True)
     
-    # Sidebar for configuration
+    # Get memory manager
+    memory = get_memory_manager()
+    
+    # Sidebar for configuration and memory
     with st.sidebar:
         st.markdown("### ⚙️ Configuration")
         
@@ -210,13 +256,52 @@ def main():
         
         st.divider()
         
-        # Research settings with better organization
+        # Memory settings
+        st.markdown("### 🧠 Memory Settings")
+        memory_enabled = st.checkbox("Enable Research Memory", value=st.session_state.memory_enabled, help="Remember research history and provide context")
+        st.session_state.memory_enabled = memory_enabled
+        
+        if memory_enabled:
+            # User insights
+            insights = memory.get_research_insights(st.session_state.user_id)
+            if insights.get("total_sessions", 0) > 0:
+                st.markdown("#### 📊 Your Research Profile")
+                st.metric("Total Sessions", insights["total_sessions"])
+                st.metric("Recent Activity", insights["recent_activity"])
+                
+                if insights.get("top_topics"):
+                    st.markdown("**🎯 Top Research Areas:**")
+                    for topic, count in insights["top_topics"][:3]:
+                        st.write(f"• {topic} ({count}x)")
+        
+        st.divider()
+        
+        # Research settings
         st.markdown("### 🎛️ Research Settings")
         max_articles = st.slider("📊 Max Articles to Process", 3, 10, Config.MAX_ARTICLES_TO_PROCESS)
         Config.MAX_ARTICLES_TO_PROCESS = max_articles
         
         content_length = st.slider("📝 Content Length per Article", 1000, 5000, Config.MAX_CONTENT_LENGTH)
         Config.MAX_CONTENT_LENGTH = content_length
+        
+        st.divider()
+        
+        # Research History
+        if memory_enabled:
+            st.markdown("### 📚 Research History")
+            history = memory.get_user_research_history(st.session_state.user_id, limit=5)
+            
+            if history:
+                st.markdown("**Recent Research:**")
+                for idx, session in enumerate(history):
+                    with st.container():
+                        # Use both index and session_id to ensure uniqueness
+                        unique_key = f"hist_{idx}_{session['session_id'][:8]}"
+                        if st.button(f"📄 {session['query'][:30]}...", key=unique_key, use_container_width=True):
+                            st.session_state.research_query = session['query']
+                            st.rerun()
+            else:
+                st.info("No research history yet. Start your first research!")
         
         st.divider()
         
@@ -247,10 +332,10 @@ def main():
             value=default_query,
             height=120,
             placeholder="e.g., 'What are the latest developments in artificial intelligence safety and alignment research?'",
-            help="Be specific and detailed for better research results"
+            help="Be specific and detailed for better research results. Memory will help provide context from your previous research."
         )
         
-        col_search, col_clear = st.columns([3, 1])
+        col_search, col_clear, col_insights = st.columns([2, 1, 1])
         
         with col_search:
             search_button = st.button("🚀 Start Research", type="primary", use_container_width=True)
@@ -259,6 +344,26 @@ def main():
             if st.button("🗑️ Clear", use_container_width=True):
                 st.session_state.clear()
                 st.rerun()
+        
+        with col_insights:
+            if memory_enabled and st.button("🔍 Find Similar", use_container_width=True):
+                if research_query.strip():
+                    similar = memory.find_similar_research(research_query.strip(), st.session_state.user_id)
+                    if similar:
+                        st.session_state.show_similar = similar
+                    else:
+                        st.session_state.show_similar = []
+        
+        # Show similar research if found
+        if st.session_state.get('show_similar'):
+            st.markdown("#### 🔗 Similar Research Found:")
+            for sim in st.session_state.show_similar[:3]:
+                st.markdown(f"""
+                <div class="history-item">
+                    <strong>📄 {sim['query']}</strong><br>
+                    <small>Similarity: {sim['similarity']:.0%} | {sim['timestamp'][:10]}</small>
+                </div>
+                """, unsafe_allow_html=True)
     
     with col2:
         st.markdown("### 📊 Research Statistics")
@@ -275,7 +380,13 @@ def main():
                 st.metric("📝 Words", results.get('summary', {}).get('word_count', 0))
                 if results.get('research_paper'):
                     st.metric("📑 Paper", "✅")
+                if results.get('summary', {}).get('memory_enhanced'):
+                    st.metric("🧠 Memory", "✅")
             st.markdown('</div>', unsafe_allow_html=True)
+            
+            # Show session info
+            if results.get('session_id'):
+                st.markdown(f"**🔗 Session:** `{results['session_id'][:8]}...`")
         else:
             st.markdown('<div class="metric-container">', unsafe_allow_html=True)
             st.info("🎯 Run a research query to see detailed statistics and results")
@@ -290,11 +401,17 @@ def main():
             return
         
         with st.spinner("🔄 Initializing AI Research Agent..."):
-            agent = create_research_agent()
+            agent = create_research_agent(st.session_state.user_id)
         
         if not agent:
             st.error("❌ Failed to initialize research agent. Please check your API keys.")
             return
+        
+        # Check for similar research
+        if memory_enabled:
+            similar_research = agent.find_related_research(research_query)
+            if similar_research:
+                st.info(f"🔍 Found {len(similar_research)} similar research topics in your history. This will help provide better context!")
         
         # Enhanced progress tracking
         progress_container = st.container()
@@ -310,7 +427,7 @@ def main():
             status_text.text(f"🔄 {message}")
         
         try:
-            results = agent.research_topic(research_query, progress_callback=update_progress)
+            results = agent.research_topic(research_query, progress_callback=update_progress, use_memory=memory_enabled)
             st.session_state.research_results = results
             
             progress_bar.empty()
@@ -320,7 +437,11 @@ def main():
                 st.error(f"❌ Research failed: {results.get('error', 'Unknown error')}")
                 return
             
-            st.success("✅ Research completed successfully!")
+            success_msg = "✅ Research completed successfully!"
+            if results.get('summary', {}).get('memory_enhanced'):
+                success_msg += " 🧠 Enhanced with your research history!"
+            
+            st.success(success_msg)
             display_research_results(results)
             
         except Exception as e:
@@ -335,19 +456,38 @@ def main():
         display_research_results(st.session_state.research_results)
 
 def display_research_results(results):
-    """Enhanced display of research results with better structure"""
+    """Enhanced display of research results with memory features"""
     
     st.markdown("---")
     st.markdown("## 📋 Research Results")
     
-    # Query information card
+    # Query information card with memory indicators
+    memory_indicator = ""
+    if results.get('summary', {}).get('memory_enhanced'):
+        memory_indicator = " 🧠 *Enhanced with research memory*"
+    
+    session_info = ""
+    if results.get('session_id'):
+        session_info = f"**🔗 Session ID:** `{results['session_id']}`\n"
+    
     st.markdown(f"""
     <div class="research-card">
-        <h3>🎯 Research Query</h3>
+        <h3>🎯 Research Query{memory_indicator}</h3>
         <p style="font-size: 1.1rem; font-weight: 500;">"{results.get('query', 'Unknown')}"</p>
         <p style="color: #64748b; margin-bottom: 0;">📅 Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+        {session_info}
     </div>
     """, unsafe_allow_html=True)
+    
+    # Enhanced query info
+    if results.get('enhanced_query') and results['enhanced_query'] != results.get('query'):
+        st.markdown(f"""
+        <div class="memory-card">
+            <h4>🧠 Memory-Enhanced Search</h4>
+            <p>Your search was enhanced with context from previous research:</p>
+            <p><em>"{results['enhanced_query']}"</em></p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Summary section with enhanced styling
     summary = results.get('summary', {})
@@ -360,7 +500,7 @@ def display_research_results(results):
         
         st.markdown(summary['summary_text'])
 
-    # Research paper generation section - MOVED UP
+    # Research paper generation section
     if not results.get('research_paper'):
         st.markdown("""
         <div class="research-card">
@@ -369,50 +509,42 @@ def display_research_results(results):
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("📑 Generate Research Paper", type="primary", use_container_width=True):
-            progress_container = st.container()
-            with progress_container:
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+        col_paper, col_continue = st.columns(2)
+        
+        with col_paper:
+            if st.button("📑 Generate Research Paper", type="primary", use_container_width=True):
+                generate_research_paper(results)
+        
+        with col_continue:
+            if results.get('session_id') and st.button("➕ Continue Research", type="secondary", use_container_width=True):
+                st.session_state.continue_session_id = results['session_id']
+                st.session_state.show_continue_form = True
 
-            def update_progress(percentage, message):
-                if percentage > 1:
-                    percentage = percentage / 100.0
-                percentage = max(0.0, min(1.0, percentage))
-                progress_bar.progress(percentage)
-                status_text.text(f"🔄 {message}")
-
-            try:
-                update_progress(5, "Initializing research paper generation...")
-                
-                agent = create_research_agent()
-                research_query = results.get('query', 'Unknown Query')
-                articles = results.get('articles', [])
-
-                update_progress(10, "Starting paper generation...")
-                
-                # Generate the research paper with progress callback
-                research_paper_result = agent.generate_full_paper(
-                    research_query, 
-                    articles, 
-                    progress_callback=update_progress
-                )
-                
-                # Store the full result dictionary, not just the text
-                st.session_state.research_results['research_paper'] = research_paper_result
-
-                progress_bar.empty()
-                status_text.empty()
-                
-                st.success("📄 Research paper generated successfully!")
+    # Continue research form
+    if st.session_state.get('show_continue_form'):
+        st.markdown("""
+        <div class="memory-card">
+            <h3>➕ Continue Research Session</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        continue_query = st.text_area(
+            "Additional research question:",
+            placeholder="e.g., 'What are the practical applications of this research?'",
+            key="continue_query"
+        )
+        
+        col_cont, col_cancel = st.columns(2)
+        with col_cont:
+            if st.button("🚀 Continue Research", use_container_width=True):
+                if continue_query.strip():
+                    continue_research_session(continue_query.strip())
+        with col_cancel:
+            if st.button("❌ Cancel", use_container_width=True):
+                st.session_state.show_continue_form = False
                 st.rerun()
 
-            except Exception as e:
-                st.error(f"❌ Failed to generate research paper: {str(e)}")
-                progress_bar.empty()
-                status_text.empty()
-
-    # Research paper download section - show if paper exists
+    # Research paper download section
     paper_result = results.get("research_paper")
     if paper_result and isinstance(paper_result, dict) and paper_result.get("research_paper"):
         st.markdown("""
@@ -422,7 +554,6 @@ def display_research_results(results):
         </div>
         """, unsafe_allow_html=True)
 
-        # Extract the actual paper text from the result dictionary
         paper_text = paper_result.get("research_paper", "")
         
         if paper_text and isinstance(paper_text, str):
@@ -482,7 +613,7 @@ def display_research_results(results):
             )
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Enhanced analysis metrics - MOVED UP
+    # Enhanced analysis metrics
     articles = results.get('articles', [])
     sources = summary.get('sources', [])
     
@@ -503,7 +634,24 @@ def display_research_results(results):
             avg_content_length = total_words // len(articles) if articles else 0
             st.metric("📊 Avg. Article Length", avg_content_length)
 
-    # Sources section with better organization - MOVED TO END
+    # Memory insights section
+    if st.session_state.memory_enabled and results.get('session_id'):
+        memory = get_memory_manager()
+        user_insights = memory.get_research_insights(st.session_state.user_id)
+        
+        if user_insights.get('insights'):
+            st.markdown("## 🧠 Research Insights")
+            
+            st.markdown("""
+            <div class="memory-card">
+                <h4>📈 Your Research Patterns</h4>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            for insight in user_insights['insights'][:3]:
+                st.markdown(f"• {insight}")
+
+    # Sources section with better organization
     if sources:
         st.markdown(f"## 📚 Research Sources ({len(sources)})")
         
@@ -532,19 +680,97 @@ def display_research_results(results):
                 st.markdown(f"- **📊 Content Length:** {len(article.get('content', '')):,} characters")
                 if article.get('status') == 'error':
                     st.markdown(f"- **⚠️ Error:** {article.get('error', 'Unknown error')}")
-                if i < len(articles):  # Don't add separator after last item
+                if i < len(articles):
                     st.markdown("---")
 
+def generate_research_paper(results):
+    """Generate research paper with progress tracking"""
+    progress_container = st.container()
+    with progress_container:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+    def update_progress(percentage, message):
+        if percentage > 1:
+            percentage = percentage / 100.0
+        percentage = max(0.0, min(1.0, percentage))
+        progress_bar.progress(percentage)
+        status_text.text(f"🔄 {message}")
+
+    try:
+        update_progress(5, "Initializing research paper generation...")
+        
+        agent = create_research_agent(st.session_state.user_id)
+        research_query = results.get('query', 'Unknown Query')
+        articles = results.get('articles', [])
+
+        update_progress(10, "Starting paper generation...")
+        
+        research_paper_result = agent.generate_full_paper(
+            research_query, 
+            articles, 
+            progress_callback=update_progress
+        )
+        
+        st.session_state.research_results['research_paper'] = research_paper_result
+
+        progress_bar.empty()
+        status_text.empty()
+        
+        success_msg = "📄 Research paper generated successfully!"
+        if research_paper_result.get('memory_enhanced'):
+            success_msg += " 🧠 Enhanced with your research context!"
+        
+        st.success(success_msg)
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"❌ Failed to generate research paper: {str(e)}")
+        progress_bar.empty()
+        status_text.empty()
+
+def continue_research_session(continue_query):
+    """Continue an existing research session"""
+    session_id = st.session_state.get('continue_session_id')
+    if not session_id:
+        st.error("❌ No active session found")
+        return
+    
+    try:
+        agent = create_research_agent(st.session_state.user_id)
+        
+        with st.spinner("🔄 Continuing research session..."):
+            continued_results = agent.continue_research_session(session_id, continue_query)
+            
+            if continued_results.get('status') == 'success':
+                st.session_state.research_results = continued_results
+                st.session_state.show_continue_form = False
+                st.success("✅ Research session continued successfully! 🧠 Building on previous context.")
+                st.rerun()
+            else:
+                st.error(f"❌ Failed to continue research: {continued_results.get('error', 'Unknown error')}")
+    
+    except Exception as e:
+        st.error(f"❌ Error continuing research: {str(e)}")
+
 def generate_markdown_report(results):
-    """Generate enhanced markdown report"""
+    """Generate enhanced markdown report with memory indicators"""
     query = results.get('query', 'Unknown Query')
     summary = results.get('summary', {})
     sources = summary.get('sources', [])
     
-    markdown_content = f"""# 🔍 AI Research Report: {query}
+    memory_note = ""
+    if summary.get('memory_enhanced'):
+        memory_note = " (Enhanced with Research Memory 🧠)"
+    
+    session_note = ""
+    if results.get('session_id'):
+        session_note = f"**🔗 Session ID:** `{results['session_id']}`  \n"
+    
+    markdown_content = f"""# 🔍 AI Research Report: {query}{memory_note}
 
 **📅 Generated:** {datetime.now().strftime('%B %d, %Y at %I:%M %p')}  
-**📚 Total Sources:** {len(sources)}  
+{session_note}**📚 Total Sources:** {len(sources)}  
 **📝 Summary Length:** {summary.get('word_count', 0)} words  
 **📊 Articles Analyzed:** {summary.get('articles_analyzed', 0)}
 
@@ -576,31 +802,36 @@ def generate_markdown_report(results):
 ## 📊 Research Metadata
 
 - **🔬 Research Method:** AI-powered web search and content analysis
-- **🤖 Generated by:** AI Research Agent v2.0
+- **🤖 Generated by:** AI Research Agent v2.0 with Memory
 - **⏰ Processing Time:** Automated real-time analysis
 - **🎯 Query Complexity:** Advanced multi-source synthesis
+- **🧠 Memory Enhancement:** {"Yes" if summary.get('memory_enhanced') else "No"}
 
 ---
 
-*This report was generated using advanced AI research techniques for comprehensive information gathering and analysis.*
+*This report was generated using advanced AI research techniques with contextual memory for enhanced insights.*
 """
     
     return markdown_content
 
 def generate_text_report(results):
-    """Generate enhanced plain text report"""
+    """Generate enhanced plain text report with memory indicators"""
     query = results.get('query', 'Unknown Query')
     summary = results.get('summary', {})
     sources = summary.get('sources', [])
     
-    text_content = f"""AI RESEARCH REPORT
+    memory_indicator = " (Memory Enhanced)" if summary.get('memory_enhanced') else ""
+    
+    text_content = f"""AI RESEARCH REPORT{memory_indicator}
 ==================
 
 Research Query: {query}
 Generated: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}
+Session ID: {results.get('session_id', 'N/A')}
 Total Sources: {len(sources)}
 Summary Length: {summary.get('word_count', 0)} words
 Articles Analyzed: {summary.get('articles_analyzed', 0)}
+Memory Enhanced: {"Yes" if summary.get('memory_enhanced') else "No"}
 
 EXECUTIVE SUMMARY
 =================
@@ -627,10 +858,11 @@ Citation: {source.get('citation', 'N/A')}
 
 Articles Processed: {summary.get('articles_analyzed', 0)}
 Research Method: AI-powered web search and content analysis
-Generated by: AI Research Agent v2.0
+Generated by: AI Research Agent v2.0 with Memory
 Processing: Automated real-time analysis
+Memory Enhancement: {"Enabled" if summary.get('memory_enhanced') else "Disabled"}
 
-This report was generated using advanced AI research techniques.
+This report was generated using advanced AI research techniques with contextual memory.
 """
     
     return text_content

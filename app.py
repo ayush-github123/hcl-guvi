@@ -48,7 +48,7 @@ st.markdown("""
     background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
     padding: 2rem;
     border-radius: 12px;
-    margin: 1.5rem 0;
+    margin: 1rem 0;
     border-left: 5px solid #4f46e5;
     box-shadow: 0 4px 16px rgba(0,0,0,0.08);
     border: 1px solid #e2e8f0;
@@ -143,7 +143,7 @@ hr {
     border: none;
     height: 2px;
     background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 50%, #ec4899 100%);
-    margin: 2rem 0;
+    margin: 1.5rem 0;
     border-radius: 2px;
 }
 
@@ -165,6 +165,21 @@ hr {
     border-radius: 12px;
     border: 1px solid #f59e0b;
     margin: 1rem 0;
+}
+
+/* Fix spacing issues */
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+}
+
+/* Remove extra gaps */
+.element-container {
+    margin-bottom: 0.5rem !important;
+}
+
+div[data-testid="stVerticalBlock"] > div[style*="flex-direction: column;"] > div {
+    gap: 0.5rem;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -259,7 +274,7 @@ def main():
             with col_m2:
                 st.metric("📝 Words", results.get('summary', {}).get('word_count', 0))
                 if results.get('research_paper'):
-                    st.metric("📑 Paper", "✅ Ready")
+                    st.metric("📑 Paper", "✅")
             st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div class="metric-container">', unsafe_allow_html=True)
@@ -320,7 +335,7 @@ def main():
         display_research_results(st.session_state.research_results)
 
 def display_research_results(results):
-    """Enhanced display of research results"""
+    """Enhanced display of research results with better structure"""
     
     st.markdown("---")
     st.markdown("## 📋 Research Results")
@@ -344,8 +359,93 @@ def display_research_results(results):
         """, unsafe_allow_html=True)
         
         st.markdown(summary['summary_text'])
+
+    # Research paper generation section - MOVED UP
+    if not results.get('research_paper'):
+        st.markdown("""
+        <div class="research-card">
+            <h3>📑 Generate Complete Research Paper</h3>
+            <p>Create a comprehensive academic-style research paper from your sources.</p>
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Enhanced download section
+        if st.button("📑 Generate Research Paper", type="primary", use_container_width=True):
+            progress_container = st.container()
+            with progress_container:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+
+            def update_progress(percentage, message):
+                if percentage > 1:
+                    percentage = percentage / 100.0
+                percentage = max(0.0, min(1.0, percentage))
+                progress_bar.progress(percentage)
+                status_text.text(f"🔄 {message}")
+
+            try:
+                update_progress(5, "Initializing research paper generation...")
+                
+                agent = create_research_agent()
+                research_query = results.get('query', 'Unknown Query')
+                articles = results.get('articles', [])
+
+                update_progress(10, "Starting paper generation...")
+                
+                # Generate the research paper with progress callback
+                research_paper_result = agent.generate_full_paper(
+                    research_query, 
+                    articles, 
+                    progress_callback=update_progress
+                )
+                
+                # Store the full result dictionary, not just the text
+                st.session_state.research_results['research_paper'] = research_paper_result
+
+                progress_bar.empty()
+                status_text.empty()
+                
+                st.success("📄 Research paper generated successfully!")
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"❌ Failed to generate research paper: {str(e)}")
+                progress_bar.empty()
+                status_text.empty()
+
+    # Research paper download section - show if paper exists
+    paper_result = results.get("research_paper")
+    if paper_result and isinstance(paper_result, dict) and paper_result.get("research_paper"):
+        st.markdown("""
+        <div class="research-card">
+            <h3>📑 Complete Research Paper</h3>
+            <p>Your comprehensive research paper is ready for download in multiple formats.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Extract the actual paper text from the result dictionary
+        paper_text = paper_result.get("research_paper", "")
+        
+        if paper_text and isinstance(paper_text, str):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    "📄 Download Paper (Markdown)",
+                    data=paper_text,
+                    file_name=f"research_paper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                    mime="text/markdown",
+                    use_container_width=True
+                )
+            with col2:
+                st.download_button(
+                    "📝 Download Paper (Text)",
+                    data=paper_text,
+                    file_name=f"research_paper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+
+    # Download section for summary reports
+    if summary.get('summary_text'):
         st.markdown('<div class="download-section">', unsafe_allow_html=True)
         st.markdown("#### 💾 Download Research Report")
         
@@ -382,116 +482,11 @@ def display_research_results(results):
             )
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Enhanced paper generation section
-    if 'research_results' in st.session_state:
-        results = st.session_state.research_results
-        
-        st.markdown("---")
-        if not results.get('research_paper'):
-            st.markdown("""
-            <div class="research-card">
-                <h3>📑 Generate Complete Research Paper</h3>
-                <p>Create a comprehensive academic-style research paper from your sources.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button("📑 Generate Research Paper", type="primary", use_container_width=True):
-                progress_container = st.container()
-                with progress_container:
-                    progress_bar = st.progress(0)
-                    status_text = st.empty()
-
-                def update_progress(percentage, message):
-                    if percentage > 1:
-                        percentage = percentage / 100.0
-                    percentage = max(0.0, min(1.0, percentage))
-                    progress_bar.progress(percentage)
-                    status_text.text(f"🔄 {message}")
-
-                try:
-                    status_text.text("🔄 Generating comprehensive research paper...")
-                    
-                    import time
-                    for i in range(1, 101, 15):
-                        time.sleep(0.3)
-                        update_progress(i, f"Processing research content... {i}%")
-
-                    agent = create_research_agent()
-                    research_query = results.get('query', 'Unknown Query')
-                    articles = results.get('articles', [])
-
-                    research_paper_content = agent.generate_full_paper(research_query, articles)
-                    
-                    st.session_state.research_results['research_paper'] = {
-                        "research_paper": research_paper_content
-                    }
-
-                    progress_bar.empty()
-                    status_text.empty()
-                    
-                    st.success("📄 Research paper generated successfully!")
-                    st.rerun()
-
-                except Exception as e:
-                    st.error(f"❌ Failed to generate research paper: {str(e)}")
-                    progress_bar.empty()
-                    status_text.empty()
-    
-    # Sources section with better organization
-    sources = summary.get('sources', [])
-    if sources:
-        st.markdown("---")
-        st.markdown(f"## 📚 Research Sources ({len(sources)})")
-        
-        for source in sources:
-            status_icon = "✅" if source.get('status') == 'success' else "❌"
-            status_class = "status-success" if source.get('status') == 'success' else "status-error"
-            
-            st.markdown(f"""
-            <div class="source-item">
-                <h4>{status_icon} [{source.get('number', '?')}] {source.get('title', 'Unknown Title')}</h4>
-                <p><strong>🌐 Domain:</strong> {source.get('domain', 'Unknown')}</p>
-                <p><strong>📅 Date:</strong> {source.get('date', 'Unknown')}</p>
-                <p><strong>📖 Citation:</strong> {source.get('citation', 'N/A')}</p>
-                <p><a href="{source.get('url', '#')}" target="_blank" style="color: #4f46e5; text-decoration: none; font-weight: 500;">🔗 View Original Article →</a></p>
-            </div>
-            """, unsafe_allow_html=True)
-
-    # Research paper download section
-    paper = results.get("research_paper", {})
-    if paper and paper.get("research_paper"):
-        st.markdown("---")
-        st.markdown("""
-        <div class="research-card">
-            <h3>📑 Complete Research Paper</h3>
-            <p>Your comprehensive research paper is ready for download in multiple formats.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        full_paper_text = paper["research_paper"]
-
-        col1, col2 = st.columns(2)
-        with col1:
-            st.download_button(
-                "📄 Download Paper (Markdown)",
-                data=full_paper_text,
-                file_name=f"research_paper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
-                mime="text/markdown",
-                use_container_width=True
-            )
-        with col2:
-            st.download_button(
-                "📝 Download Paper (Text)",
-                data=full_paper_text,
-                file_name=f"research_paper_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-
-    # Enhanced analysis metrics
+    # Enhanced analysis metrics - MOVED UP
     articles = results.get('articles', [])
+    sources = summary.get('sources', [])
+    
     if articles:
-        st.markdown("---")
         st.markdown("## 📊 Research Analysis")
         
         col1, col2, col3, col4 = st.columns(4)
@@ -507,10 +502,29 @@ def display_research_results(results):
         with col4:
             avg_content_length = total_words // len(articles) if articles else 0
             st.metric("📊 Avg. Article Length", avg_content_length)
+
+    # Sources section with better organization - MOVED TO END
+    if sources:
+        st.markdown(f"## 📚 Research Sources ({len(sources)})")
         
+        for source in sources:
+            status_icon = "✅"
+            status_class = "status-success" if source.get('status') == 'success' else "status-error"
+            
+            st.markdown(f"""
+            <div class="source-item">
+                <h4>{status_icon} [{source.get('number', '?')}] {source.get('title', 'Unknown Title')}</h4>
+                <p><strong>🌐 Domain:</strong> {source.get('domain', 'Unknown')}</p>
+                <p><strong>📅 Date:</strong> {source.get('date', 'Unknown')}</p>
+                <p><strong>📖 Citation:</strong> {source.get('citation', 'N/A')}</p>
+                <p><a href="{source.get('url', '#')}" target="_blank" style="color: #4f46e5; text-decoration: none; font-weight: 500;">🔗 View Original Article →</a></p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Detailed article analysis in expandable section
         with st.expander("🔍 Detailed Article Analysis"):
             for i, article in enumerate(articles, 1):
-                status_emoji = "✅" if article.get('status') == 'success' else "❌"
+                status_emoji = "✅"
                 st.markdown(f"**Article {i}:** {status_emoji} **{article.get('status', 'unknown').upper()}**")
                 st.markdown(f"- **📄 Title:** {article.get('title', 'Unknown')}")
                 st.markdown(f"- **🔗 URL:** {article.get('url', 'N/A')}")
@@ -518,7 +532,8 @@ def display_research_results(results):
                 st.markdown(f"- **📊 Content Length:** {len(article.get('content', '')):,} characters")
                 if article.get('status') == 'error':
                     st.markdown(f"- **⚠️ Error:** {article.get('error', 'Unknown error')}")
-                st.markdown("---")
+                if i < len(articles):  # Don't add separator after last item
+                    st.markdown("---")
 
 def generate_markdown_report(results):
     """Generate enhanced markdown report"""
@@ -546,7 +561,7 @@ def generate_markdown_report(results):
 """
     
     for source in sources:
-        status_icon = "✅" if source.get('status') == 'success' else "❌"
+        status_icon = "✅"
         markdown_content += f"""### {status_icon} [{source.get('number', '?')}] {source.get('title', 'Unknown Title')}
 
 - **🔗 URL:** {source.get('url', 'N/A')}

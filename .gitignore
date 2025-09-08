@@ -1,0 +1,4 @@
+*.pptx
+venv
+old_files
+.env
